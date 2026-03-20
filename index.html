@@ -448,7 +448,49 @@ function pressGo(){
     advArm(i+1);
     return;
   }
-  triggerCue(c,i);
+  // Collect this cue plus any consecutive "start next immediately" cues
+  const batch=[{cue:c,idx:i}];
+  let nextIdx=i;
+  while(true){
+    const curr=S.cues[nextIdx];
+    if(!curr||!curr.autoFollow||(curr.postWait||0)>-3600)break;
+    // This cue triggers next immediately
+    nextIdx++;
+    while(nextIdx<S.cues.length&&S.cues[nextIdx].disabled)nextIdx++;
+    if(nextIdx>=S.cues.length)break;
+    batch.push({cue:S.cues[nextIdx],idx:nextIdx});
+  }
+  console.log('YouLab: GO firing '+batch.length+' cue(s): '+batch.map(b=>'Q'+(b.idx+1)).join(', '));
+  // Fire all cues in the batch
+  batch.forEach(b=>{
+    const bc=b.cue,bi=b.idx;
+    if(!bc||bc.disabled)return;
+    if(!bc.videoId)return;
+    const p=S.players[bc.id];
+    if(!p||!S.ready[bc.id]){
+      console.log('YouLab: Q'+(bi+1)+' not ready, retrying...');
+      let retries=0;
+      const retry=setInterval(()=>{
+        retries++;
+        if(S.players[bc.id]&&S.ready[bc.id]){clearInterval(retry);fireSingleCue(bc,S.players[bc.id]);}
+        else if(retries>=10){clearInterval(retry);console.warn('YouLab: Q'+(bi+1)+' never ready');}
+      },200);
+      return;
+    }
+    fireSingleCue(bc,p);
+  });
+  // Advance armed past the entire batch
+  const lastIdx=batch[batch.length-1].idx;
+  advArm(lastIdx+1);
+}
+
+function fireSingleCue(c,p){
+  console.log('YouLab: firing Q'+(S.cues.indexOf(c)+1)+' "'+(c.name||'')+'"');
+  if(c.stopOthers){S.cues.forEach(x=>{if(x.id!==c.id&&['playing','fading'].includes(x._status)){
+    if(c.stopOthersFade>0){x._status='fading';fadeTo(x.id,S.players[x.id],S.players[x.id].getVolume(),0,c.stopOthersFade,()=>{S.players[x.id].stopVideo();x._status='idle';x._currentTime=0;unDuck(x.id);render();});}
+    else stopCue(x.id);}});}
+  if(c.preWait>0){c._status='prewait';render();S.pwTimers[c.id]=setTimeout(()=>{delete S.pwTimers[c.id];startPlay(c,p);},c.preWait*1000);}
+  else startPlay(c,p);
 }
 
 function executeGoAction(c){
@@ -467,7 +509,6 @@ function triggerCue(c,i){
   if(!c.videoId){advArm(i+1);if(c.autoFollow)triggerAF(c,i);return;}
   const p=S.players[c.id];
   if(!p||!S.ready[c.id]){
-    // Player not ready yet - retry up to 10 times over 2 seconds
     console.log('YouLab: player not ready for Q'+(i+1)+', retrying...');
     let retries=0;
     const retry=setInterval(()=>{
@@ -475,21 +516,18 @@ function triggerCue(c,i){
       if(S.players[c.id]&&S.ready[c.id]){
         clearInterval(retry);
         console.log('YouLab: player ready for Q'+(i+1)+', triggering');
-        triggerCue(c,i);
+        fireSingleCue(c,S.players[c.id]);
+        advArm(i+1);
       }else if(retries>=10){
         clearInterval(retry);
-        console.warn('YouLab: player for Q'+(i+1)+' never became ready');
+        console.warn('YouLab: player for Q'+(i+1)+' never became ready, skipping');
+        advArm(i+1);
       }
     },200);
     return;
   }
-  console.log('YouLab: triggering Q'+(i+1)+' "'+(c.name||'')+'"');
-  if(c.stopOthers){S.cues.forEach(x=>{if(x.id!==c.id&&['playing','fading'].includes(x._status)){
-    if(c.stopOthersFade>0){x._status='fading';fadeTo(x.id,S.players[x.id],S.players[x.id].getVolume(),0,c.stopOthersFade,()=>{S.players[x.id].stopVideo();x._status='idle';x._currentTime=0;unDuck(x.id);render();});}
-    else stopCue(x.id);}});}
-  if(c.preWait>0){c._status='prewait';render();S.pwTimers[c.id]=setTimeout(()=>{delete S.pwTimers[c.id];startPlay(c,p);},c.preWait*1000);}
-  else startPlay(c,p);
-  if(c.goAction==='none')advArm(i+1);
+  fireSingleCue(c,p);
+  advArm(i+1);
 }
 
 function startPlay(c,p){
@@ -499,13 +537,6 @@ function startPlay(c,p){
   p.playVideo();c._status='playing';c._duration=p.getDuration();
   if(c.duckOthers)doDuck(c);
   if(c.fadeIn>0){setTimeout(()=>{if(c._status==='playing'){const pl=S.players[c.id];if(pl)fadeTo(c.id,pl,0,c.volume,c.fadeIn);}},150);}
-  // "Start Next Immediately" - trigger next cue right now
-  if(c.autoFollow&&(c.postWait||0)<=-3600){
-    c._afFired=true;
-    const idx=S.cues.indexOf(c);
-    console.log('YouLab: Q'+(idx+1)+' starting next immediately');
-    triggerNext(idx);
-  }
   render();startProg();
 }
 
