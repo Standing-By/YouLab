@@ -482,6 +482,7 @@ function pressGo(){
   // Advance armed past the entire batch
   const lastIdx=batch[batch.length-1].idx;
   advArm(lastIdx+1);
+  render();
 }
 
 function fireSingleCue(c,p){
