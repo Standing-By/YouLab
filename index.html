@@ -486,6 +486,11 @@ function pressGo(){
 }
 
 function fireSingleCue(c,p){
+  // Skip if already playing (e.g. batch already started this cue)
+  if(c._status==='playing'||c._status==='fading'){
+    console.log('YouLab: Q'+(S.cues.indexOf(c)+1)+' already playing, skipping');
+    return;
+  }
   console.log('YouLab: firing Q'+(S.cues.indexOf(c)+1)+' "'+(c.name||'')+'"');
   if(c.stopOthers){S.cues.forEach(x=>{if(x.id!==c.id&&['playing','fading'].includes(x._status)){
     if(c.stopOthersFade>0){x._status='fading';fadeTo(x.id,S.players[x.id],S.players[x.id].getVolume(),0,c.stopOthersFade,()=>{S.players[x.id].stopVideo();x._status='idle';x._currentTime=0;unDuck(x.id);render();});}
@@ -581,8 +586,13 @@ function triggerNext(ci){let n=ci+1;while(n<S.cues.length&&S.cues[n].disabled)n+
   else{console.log('YouLab: triggerNext -> no more cues');}
 }
 function advArm(fi){let i=fi;while(i<S.cues.length&&S.cues[i].disabled)i++;
-  if(i>=S.cues.length&&S.continuousShow)i=0;
-  S.armed=Math.min(i,S.cues.length);
+  const target=Math.min(i,S.cues.length);
+  if(i>=S.cues.length&&S.continuousShow){
+    // Wrap around - this is an intentional reset
+    S.armed=0;return;
+  }
+  // Never move armed backwards (batch/auto-follow may call this with stale indices)
+  if(target>S.armed||S.armed>=S.cues.length)S.armed=target;
 }
 
 // ========== FADE / DUCK ==========
