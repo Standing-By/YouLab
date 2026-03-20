@@ -74,13 +74,17 @@
   .cue-list::-webkit-scrollbar{width:5px;}
   .cue-list::-webkit-scrollbar-track{background:var(--bg-deep);}
   .cue-list::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
-  .cr{display:grid;grid-template-columns:36px 1fr 65px 60px 44px 22px;padding:4px 10px;border-bottom:1px solid #15151f;cursor:pointer;transition:background .1s;align-items:center;min-height:30px;position:relative;}
+  .cr{display:grid;grid-template-columns:36px 1fr 65px 60px 44px 22px;padding:4px 10px;border-bottom:1px solid #15151f;cursor:grab;transition:background .1s;align-items:center;min-height:30px;position:relative;}
   .cr:hover{background:var(--bg-hover);}
   .cr.sel{background:var(--bg-raised);outline:1px solid var(--amber-dim);}
-  .cr.armed{background:linear-gradient(90deg,var(--green-surface),var(--bg-surface));}
+  .cr.armed{background:linear-gradient(90deg,var(--green-surface),var(--bg-surface));border-left:3px solid var(--green-glow);}
   .cr.armed .cn{color:var(--green-glow);}
+  .cr.standby{border-left:3px solid var(--amber);background:linear-gradient(90deg,rgba(255,171,0,.04),transparent);}
+  .cr.standby .cn{color:var(--amber);}
   .cr.playing{background:rgba(0,230,118,.08);}
   .cr.dis{opacity:.35;}
+  .cr.drag-over{border-top:2px solid var(--green-glow);margin-top:-2px;}
+  .cr.dragging{opacity:.3;}
   .cn{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--text-secondary);}
   .cname{font-size:12px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:6px;}
   .cname .nm{color:var(--text-dim);font-style:italic;}
@@ -197,7 +201,7 @@ function fmt(s){if(s==null||isNaN(s)||s<0)return'-:--';return Math.floor(s/60)+'
 function uid(){return Date.now().toString(36)+Math.random().toString(36).substr(2,6);}
 function esc(s){const e=document.createElement('span');e.textContent=s||'';return e.innerHTML;}
 
-function makeCue(o){return Object.assign({id:uid(),name:'',url:'',videoId:null,sourceType:'youtube',fileData:null,fileName:'',volume:80,fadeIn:0,fadeOut:0,loop:'off',loopCount:0,autoFollow:false,postWait:0,preWait:0,startTime:0,endTime:null,duckOthers:false,duckLevel:50,duckFadeTime:0.5,stopOthers:false,stopOthersFade:0,disabled:false,goAction:'none',goActionFade:5,continuousShow:false,_status:'idle',_duration:0,_currentTime:0},o);}
+function makeCue(o){return Object.assign({id:uid(),name:'',url:'',videoId:null,sourceType:'youtube',fileData:null,fileName:'',volume:80,rate:100,fadeIn:0,fadeOut:0,loop:'off',loopCount:0,autoFollow:false,postWait:0,preWait:0,startTime:0,endTime:null,duckOthers:false,duckLevel:50,duckFadeTime:0.5,stopOthers:false,stopOthersFade:0,disabled:false,goAction:'none',goActionFade:5,qNum:'',continuousShow:false,_status:'idle',_duration:0,_currentTime:0},o);}
 function makeHit(o){return Object.assign({id:uid(),name:'',url:'',videoId:null,volume:80,color:'#448aff',_status:'idle'},o);}
 const HCOLORS=['#448aff','#00e676','#ffab00','#ff3d00','#b388ff','#00e5ff','#ff6090','#69f0ae'];
 
@@ -226,9 +230,9 @@ function renderApp(){
     <div class="cue-panel">
       <div class="cue-toolbar">
         <button class="btn-s add-cue" onclick="addCue()">+ ADD CUE</button>
-        <button class="btn-s" onclick="dupeCue()">COPY</button>
-        <button class="btn-s" onclick="moveUp()">&#9650;</button>
-        <button class="btn-s" onclick="moveDown()">&#9660;</button>
+        <button class="btn-s" onclick="copyCue()">COPY</button>
+        <button class="btn-s" onclick="pasteCue()">PASTE</button>
+        <button class="btn-s" onclick="delSelCue()" style="color:var(--red);border-color:var(--red-dim);">DELETE</button>
         <div class="mode-tabs">
           <div class="mt ${S.mode==='show'?'active':''}" onclick="setMode('show')">SHOW</div>
           <div class="mt ${S.mode==='edit'?'active':''}" onclick="setMode('edit')">EDIT</div>
@@ -250,7 +254,8 @@ function renderApp(){
 }
 
 function rCR(c,i){
-  let cls='cr';if(c.id===S.selId)cls+=' sel';if(i===S.armed&&S.mode==='show')cls+=' armed';
+  let cls='cr';if(c.id===S.selId)cls+=' sel';
+  if(S.mode==='show'){if(i===S.armed)cls+=' armed';else if(i===S.armed+1)cls+=' standby';}
   if(['playing','fading'].includes(c._status))cls+=' playing';if(c.disabled)cls+=' dis';
   const st=c._status==='prewait'?'WAIT':c._status.toUpperCase();
   const effStart=c.startTime||0;
@@ -259,8 +264,10 @@ function rCR(c,i){
   const effElapsed=Math.max(0,(c._currentTime||0)-effStart);
   const td=['playing','paused','fading'].includes(c._status)?fmt(effElapsed)+'/'+fmt(effDur):(effDur>0?fmt(effDur):'-:--');
   const progPct=effDur>0?(effElapsed/effDur*100).toFixed(1):'0';
-  return `<div class="${cls}" onclick="cueClick('${c.id}',${i})" ondblclick="setMode('edit')">
-    <div class="cn">${i+1}</div><div class="cname">${c.name?esc(c.name):(c.videoId?esc(c.url.substring(0,30)):'<span class=nm>no media</span>')}</div>
+  const qLabel=c.qNum||String(i+1);
+  const mediaLabel=c.name?esc(c.name):(c.sourceType==='file'&&c.fileName?esc(c.fileName):(c.videoId?esc(c.url.substring(0,30)):'<span class=nm>no media</span>'));
+  return `<div class="${cls}" draggable="true" ondragstart="dragStart(event,${i})" ondragover="dragOver(event,${i})" ondragleave="dragLeave(event)" ondrop="dropCue(event,${i})" onclick="cueClick('${c.id}',${i})" ondblclick="setMode('edit')">
+    <div class="cn">${esc(qLabel)}</div><div class="cname">${mediaLabel}</div>
     <div class="ct">${td}</div><div class="cs ${c._status}">${st}</div>
     <div class="cf">${c.autoFollow?'<span class="af">AF</span>':''}${c.loop!=='off'?'<span class="lp">L</span>':''}${c.duckOthers?'<span class="dk">D</span>':''}</div>
     <button class="cdel" onclick="event.stopPropagation();delCue('${c.id}')">&times;</button>
@@ -282,6 +289,7 @@ function rInsp(c){
   </div>
   <div class="isec"><div class="ist">Media</div>
     <div class="ir"><div class="il">Name</div><input class="ii" value="${esc(c.name)}" placeholder="Cue name" data-f="name"></div>
+    <div class="ir"><div class="il">Q#</div><input class="ii" value="${esc(c.qNum||'')}" placeholder="${S.cues.indexOf(c)+1}" style="width:50px;flex:none;" data-f="qNum"></div>
     <div class="ir"><div class="il">Source</div>
       <div style="display:flex;gap:4px;">
         <div class="preset-btn ${c.sourceType==='youtube'?'active':''}" onclick="setSource('youtube')">YouTube</div>
@@ -302,6 +310,7 @@ function rInsp(c){
   </div>
   <div class="isec"><div class="ist">Playback</div>
     <div class="ir"><div class="il">Volume</div><div class="vsc"><input type="range" min="0" max="100" value="${c.volume}" data-f="volume"><div class="vv">${c.volume}%</div></div></div>
+    <div class="ir"><div class="il">Speed</div><div class="vsc"><input type="range" min="25" max="200" value="${c.rate||100}" data-f="rate"><div class="vv">${c.rate||100}%</div></div></div>
     <div class="ir"><div class="il">Start at</div><input class="ii" type="number" min="0" step="0.5" value="${c.startTime}" data-f="startTime"><div class="iu">s</div></div>
     <div class="ir"><div class="il">End at</div><input class="ii" type="number" min="0" step="0.5" value="${c.endTime||''}" placeholder="auto" data-f="endTime"><div class="iu">s</div></div>
   </div>
@@ -381,6 +390,12 @@ function uploadAudio(){
   input.accept='.mp3,.wav,.m4a,.ogg,.aac,.flac,audio/*';
   input.onchange=(e)=>{
     const file=e.target.files[0];if(!file)return;
+    const sizeMB=(file.size/1024/1024).toFixed(1);
+    if(file.size>20*1024*1024){
+      if(!confirm('This file is '+sizeMB+'MB. Large audio files will make your save files very big.\n\nFor files over 20MB, consider using a YouTube link instead.\n\nContinue anyway?'))return;
+    }else if(file.size>5*1024*1024){
+      console.log('YouLab: audio file '+sizeMB+'MB (save files will be larger)');
+    }
     c.fileName=file.name;
     if(!c.name)c.name=file.name.replace(/\.[^.]+$/,'');
     const reader=new FileReader();
@@ -424,6 +439,8 @@ function bind(){
       c[f]=v;
       if(f==='url'){c.videoId=extractVid(v);if(c.videoId){c.sourceType='youtube';mkPlayer(c.id,c.videoId);}render();return;}
       if(f==='volume'){setVol(c,v);const d=el.parentElement.querySelector('.vv');if(d)d.textContent=v+'%';return;}
+      if(f==='rate'){c.rate=v;setRate(c,v);const d=el.parentElement.querySelector('.vv');if(d)d.textContent=v+'%';return;}
+      if(f==='qNum'){c.qNum=el.value;render();return;}
       if(['duckOthers','stopOthers','autoFollow','loop','disabled','goAction'].includes(f))render();
     });
   });
@@ -587,6 +604,11 @@ function getDur(c){
   if(c.sourceType==='file'){const a=S.audioEls[c.id];return a?a.duration:0;}
   const p=S.players[c.id];return(p&&S.ready[c.id])?p.getDuration():0;
 }
+function setRate(c,pct){
+  const r=Math.max(25,Math.min(400,pct))/100;
+  if(c.sourceType==='file'){const a=S.audioEls[c.id];if(a)a.playbackRate=r;}
+  else{const p=S.players[c.id];if(p&&S.ready[c.id])p.setPlaybackRate(r);}
+}
 function fadePlayer(id,c,from,to,dur,done){
   cancelFade(id);const st=performance.now(),ms=dur*1000;
   function tick(){const el=performance.now()-st,pr=Math.min(el/ms,1),ea=pr<.5?2*pr*pr:1-Math.pow(-2*pr+2,2)/2;
@@ -640,9 +662,18 @@ function startPlay(c){
   c._loopsDone=0;c._afFired=false;c._endHandled=false;c._fadeStarted=false;
   seekPlayer(c,c.startTime||0);
   setVol(c,c.fadeIn>0?0:c.volume);
+  if(c.rate&&c.rate!==100)setRate(c,c.rate);
   playPlayer(c);c._status='playing';c._duration=getDur(c)||c._duration;
   if(c.duckOthers)doDuck(c);
-  if(c.fadeIn>0){setTimeout(()=>{if(c._status==='playing')fadePlayer(c.id,c,0,c.volume,c.fadeIn);},150);}
+  if(c.fadeIn>0){
+    console.log('YouLab: fade-in Q'+(S.cues.indexOf(c)+1)+' from 0 to '+c.volume+' over '+c.fadeIn+'s');
+    setTimeout(()=>{
+      if(c._status==='playing'){
+        console.log('YouLab: starting fade-in animation');
+        fadePlayer(c.id,c,0,c.volume,c.fadeIn);
+      }
+    },300);
+  }
   render();startProg();
 }
 
@@ -695,17 +726,12 @@ function advArm(fi){let i=fi;while(i<S.cues.length&&S.cues[i].disabled)i++;
 }
 
 // ========== FADE / DUCK ==========
-function fadeTo(id,p,from,to,dur,done){cancelFade(id);const st=performance.now(),ms=dur*1000;
-  function tick(){const el=performance.now()-st,pr=Math.min(el/ms,1),ea=pr<.5?2*pr*pr:1-Math.pow(-2*pr+2,2)/2;
-  try{p.setVolume(Math.round(from+(to-from)*ea));}catch(e){}
-  if(pr<1)S.fades[id]={r:requestAnimationFrame(tick)};else{delete S.fades[id];if(done)done();}}
-  S.fades[id]={r:requestAnimationFrame(tick)};}
 function cancelFade(id){if(S.fades[id]){cancelAnimationFrame(S.fades[id].r);delete S.fades[id];}}
 function doDuck(dc){S.duckingCues.add(dc.id);const dt=dc.duckLevel/100;
-  S.cues.forEach(c=>{if(c.id===dc.id||!['playing','fading'].includes(c._status))return;const p=S.players[c.id];if(!p||!S.ready[c.id])return;
-  if(!S.preDuck[c.id])S.preDuck[c.id]=c.volume;fadeTo(c.id,p,p.getVolume(),Math.round(S.preDuck[c.id]*dt),dc.duckFadeTime||0.5);});}
-function unDuck(id){S.duckingCues.delete(id);if(S.duckingCues.size===0){Object.keys(S.preDuck).forEach(i=>{const c=S.cues.find(x=>x.id===i),p=S.players[i];
-  if(c&&p&&S.ready[i]&&['playing','fading'].includes(c._status))fadeTo(i,p,p.getVolume(),S.preDuck[i],0.5);});S.preDuck={};}}
+  S.cues.forEach(c=>{if(c.id===dc.id||!['playing','fading'].includes(c._status)||!isReady(c))return;
+  if(!S.preDuck[c.id])S.preDuck[c.id]=c.volume;fadePlayer(c.id,c,getVol(c),Math.round(S.preDuck[c.id]*dt),dc.duckFadeTime||0.5);});}
+function unDuck(id){S.duckingCues.delete(id);if(S.duckingCues.size===0){Object.keys(S.preDuck).forEach(i=>{const c=S.cues.find(x=>x.id===i);
+  if(c&&isReady(c)&&['playing','fading'].includes(c._status))fadePlayer(i,c,getVol(c),S.preDuck[i],0.5);});S.preDuck={};}}
 
 // ========== PROGRESS ==========
 function startProg(){if(S.progInt)return;S.progInt=setInterval(updateProg,200);}
@@ -764,15 +790,48 @@ function updateProg(){
 // ========== CUE LIST ==========
 function addCue(){const c=makeCue();S.cues.push(c);S.selId=c.id;if(S.mode!=='edit')S.mode='edit';render();}
 function delCue(id){stopCue(id);if(S.players[id]){try{S.players[id].destroy();}catch(e){}delete S.players[id];delete S.ready[id];}if(S.audioEls[id]){try{S.audioEls[id].pause();}catch(e){}delete S.audioEls[id];delete S.ready[id];}const slot=document.getElementById('yts-'+id);if(slot)slot.remove();S.cues=S.cues.filter(c=>c.id!==id);if(S.selId===id)S.selId=S.cues.length>0?S.cues[0].id:null;if(S.armed>=S.cues.length)S.armed=Math.max(0,S.cues.length-1);render();}
-function dupeCue(){const s=getSel();if(!s)return;const i=S.cues.indexOf(s);const d=makeCue({name:s.name+' (copy)',url:s.url,videoId:s.videoId,sourceType:s.sourceType,fileData:s.fileData,fileName:s.fileName,volume:s.volume,fadeIn:s.fadeIn,fadeOut:s.fadeOut,loop:s.loop,loopCount:s.loopCount,autoFollow:s.autoFollow,postWait:s.postWait,preWait:s.preWait,startTime:s.startTime,endTime:s.endTime,duckOthers:s.duckOthers,duckLevel:s.duckLevel,stopOthers:s.stopOthers,stopOthersFade:s.stopOthersFade,goAction:s.goAction,goActionFade:s.goActionFade});S.cues.splice(i+1,0,d);S.selId=d.id;if(d.videoId)mkPlayer(d.id,d.videoId);if(d.fileData)mkAudioEl(d);render();}
-function moveUp(){const s=getSel();if(!s)return;const i=S.cues.indexOf(s);if(i<=0)return;[S.cues[i-1],S.cues[i]]=[S.cues[i],S.cues[i-1]];render();}
-function moveDown(){const s=getSel();if(!s)return;const i=S.cues.indexOf(s);if(i>=S.cues.length-1)return;[S.cues[i],S.cues[i+1]]=[S.cues[i+1],S.cues[i]];render();}
+function delSelCue(){const s=getSel();if(s)delCue(s.id);}
+
+// Copy/Paste
+S._clipboard=null;
+function copyCue(){
+  const s=getSel();if(!s)return;
+  S._clipboard={name:s.name,url:s.url,videoId:s.videoId,sourceType:s.sourceType,fileData:s.fileData,fileName:s.fileName,volume:s.volume,rate:s.rate,fadeIn:s.fadeIn,fadeOut:s.fadeOut,loop:s.loop,loopCount:s.loopCount,autoFollow:s.autoFollow,postWait:s.postWait,preWait:s.preWait,startTime:s.startTime,endTime:s.endTime,duckOthers:s.duckOthers,duckLevel:s.duckLevel,stopOthers:s.stopOthers,stopOthersFade:s.stopOthersFade,goAction:s.goAction,goActionFade:s.goActionFade};
+}
+function pasteCue(){
+  if(!S._clipboard)return;
+  const sel=getSel();
+  const idx=sel?S.cues.indexOf(sel)+1:S.cues.length;
+  const d=makeCue(Object.assign({},S._clipboard));
+  S.cues.splice(idx,0,d);S.selId=d.id;
+  if(d.videoId)mkPlayer(d.id,d.videoId);
+  if(d.fileData)mkAudioEl(d);
+  render();
+}
+
+// Drag and Drop
+var _dragIdx=null;
+function dragStart(e,i){_dragIdx=i;e.dataTransfer.effectAllowed='move';e.target.classList.add('dragging');}
+function dragOver(e,i){e.preventDefault();e.dataTransfer.dropEffect='move';
+  document.querySelectorAll('.cr').forEach(r=>r.classList.remove('drag-over'));
+  e.currentTarget.classList.add('drag-over');
+}
+function dragLeave(e){e.currentTarget.classList.remove('drag-over');}
+function dropCue(e,targetIdx){
+  e.preventDefault();
+  document.querySelectorAll('.cr').forEach(r=>{r.classList.remove('drag-over','dragging');});
+  if(_dragIdx===null||_dragIdx===targetIdx){_dragIdx=null;return;}
+  const cue=S.cues.splice(_dragIdx,1)[0];
+  S.cues.splice(targetIdx>_dragIdx?targetIdx-1:targetIdx,0,cue);
+  _dragIdx=null;
+  render();
+}
+
 function selCue(id){S.selId=id;render();}
 function cueClick(id,idx){
   S.selId=id;
   if(S.mode==='show'){
     S.armed=idx;
-    // Reset cue flags so it can play again
     const c=S.cues[idx];
     if(c&&c._status==='idle'){c._endHandled=false;c._fadeStarted=false;c._afFired=false;}
   }
@@ -806,7 +865,7 @@ function saveHitEd(id){const h=S.hits.find(x=>x.id===id);if(!h)return;h.name=doc
 function delHit(id){const p=S.hitPlayers[id];if(p){try{p.stopVideo();p.destroy();}catch(e){}delete S.hitPlayers[id];delete S.ready['h-'+id];}const slot=document.getElementById('yts-h-'+id);if(slot)slot.remove();S.hits=S.hits.filter(h=>h.id!==id);render();}
 
 // ========== SAVE/LOAD ==========
-function saveShow(){const d={v:3,showName:S.showName,continuousShow:S.continuousShow,cues:S.cues.map(c=>({name:c.name,url:c.url,videoId:c.videoId,sourceType:c.sourceType,fileData:c.fileData,fileName:c.fileName,volume:c.volume,fadeIn:c.fadeIn,fadeOut:c.fadeOut,loop:c.loop,loopCount:c.loopCount,autoFollow:c.autoFollow,postWait:c.postWait,preWait:c.preWait,startTime:c.startTime,endTime:c.endTime,duckOthers:c.duckOthers,duckLevel:c.duckLevel,duckFadeTime:c.duckFadeTime,stopOthers:c.stopOthers,stopOthersFade:c.stopOthersFade,goAction:c.goAction,goActionFade:c.goActionFade,disabled:c.disabled})),hits:S.hits.map(h=>({name:h.name,url:h.url,videoId:h.videoId,volume:h.volume,color:h.color}))};
+function saveShow(){const d={v:3,showName:S.showName,continuousShow:S.continuousShow,cues:S.cues.map(c=>({name:c.name,qNum:c.qNum,url:c.url,videoId:c.videoId,sourceType:c.sourceType,fileData:c.fileData,fileName:c.fileName,volume:c.volume,rate:c.rate,fadeIn:c.fadeIn,fadeOut:c.fadeOut,loop:c.loop,loopCount:c.loopCount,autoFollow:c.autoFollow,postWait:c.postWait,preWait:c.preWait,startTime:c.startTime,endTime:c.endTime,duckOthers:c.duckOthers,duckLevel:c.duckLevel,duckFadeTime:c.duckFadeTime,stopOthers:c.stopOthers,stopOthersFade:c.stopOthersFade,goAction:c.goAction,goActionFade:c.goActionFade,disabled:c.disabled})),hits:S.hits.map(h=>({name:h.name,url:h.url,videoId:h.videoId,volume:h.volume,color:h.color}))};
   const b=new Blob([JSON.stringify(d,null,2)],{type:'application/json'}),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=(S.showName||'untitled')+'.youlab';a.click();URL.revokeObjectURL(u);}
 function loadShow(){const i=document.createElement('input');i.type='file';i.accept='.youlab,.json';i.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{importShow(JSON.parse(ev.target.result));}catch(err){alert('Error: '+err.message);}};r.readAsText(f);};i.click();}
 function importShow(d){stopAll();Object.keys(S.players).forEach(i=>{try{S.players[i].destroy();}catch(e){}});Object.keys(S.hitPlayers).forEach(i=>{try{S.hitPlayers[i].destroy();}catch(e){}});S.players={};S.hitPlayers={};S.audioEls={};S.ready={};const box=document.getElementById('ytBoxGrid');if(box)box.innerHTML='';S.showName=d.showName||'Untitled Show';S.continuousShow=d.continuousShow||false;S.cues=(d.cues||[]).map(c=>makeCue(c));S.hits=(d.hits||[]).map(h=>makeHit(h));S.selId=S.cues.length>0?S.cues[0].id:null;S.armed=0;render();S.cues.forEach(c=>{if(c.sourceType==='file'&&c.fileData)mkAudioEl(c);else if(c.videoId)mkPlayer(c.id,c.videoId);});S.hits.forEach(h=>{if(h.videoId)mkHitPlayer(h.id,h.videoId);});}
@@ -817,7 +876,10 @@ document.addEventListener('keydown',e=>{
   if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA'||e.target.tagName==='SELECT'){if(e.key==='Escape')e.target.blur();return;}
   switch(e.key){case' ':e.preventDefault();pressGo();break;case'Escape':e.preventDefault();stopAll();break;
   case'ArrowUp':e.preventDefault();selPrev();break;case'ArrowDown':e.preventDefault();selNext();break;
-  case'p':if(!e.metaKey&&!e.ctrlKey)togglePause();break;case'f':if(!e.metaKey&&!e.ctrlKey)fadeAll();break;case'r':if(!e.metaKey&&!e.ctrlKey)resetShow();break;}
+  case'p':if(!e.metaKey&&!e.ctrlKey)togglePause();break;case'f':if(!e.metaKey&&!e.ctrlKey)fadeAll();break;case'r':if(!e.metaKey&&!e.ctrlKey)resetShow();break;
+  case'c':if(e.metaKey||e.ctrlKey){e.preventDefault();copyCue();}break;
+  case'v':if(e.metaKey||e.ctrlKey){e.preventDefault();pasteCue();}break;
+  case'Delete':case'Backspace':if(!e.metaKey)delSelCue();break;}
 });
 function selPrev(){if(!S.selId||S.cues.length===0)return;const i=S.cues.findIndex(c=>c.id===S.selId);if(i>0){S.selId=S.cues[i-1].id;render();}}
 function selNext(){if(S.cues.length===0)return;if(!S.selId){S.selId=S.cues[0].id;render();return;}const i=S.cues.findIndex(c=>c.id===S.selId);if(i<S.cues.length-1){S.selId=S.cues[i+1].id;render();}}
