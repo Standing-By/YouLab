@@ -197,12 +197,12 @@ function fmt(s){if(s==null||isNaN(s)||s<0)return'-:--';return Math.floor(s/60)+'
 function uid(){return Date.now().toString(36)+Math.random().toString(36).substr(2,6);}
 function esc(s){const e=document.createElement('span');e.textContent=s||'';return e.innerHTML;}
 
-function makeCue(o){return Object.assign({id:uid(),name:'',url:'',videoId:null,volume:80,fadeIn:0,fadeOut:0,loop:'off',loopCount:0,autoFollow:false,postWait:0,preWait:0,startTime:0,endTime:null,duckOthers:false,duckLevel:50,duckFadeTime:0.5,stopOthers:false,stopOthersFade:0,disabled:false,goAction:'none',goActionFade:5,continuousShow:false,_status:'idle',_duration:0,_currentTime:0},o);}
+function makeCue(o){return Object.assign({id:uid(),name:'',url:'',videoId:null,sourceType:'youtube',fileData:null,fileName:'',volume:80,fadeIn:0,fadeOut:0,loop:'off',loopCount:0,autoFollow:false,postWait:0,preWait:0,startTime:0,endTime:null,duckOthers:false,duckLevel:50,duckFadeTime:0.5,stopOthers:false,stopOthersFade:0,disabled:false,goAction:'none',goActionFade:5,continuousShow:false,_status:'idle',_duration:0,_currentTime:0},o);}
 function makeHit(o){return Object.assign({id:uid(),name:'',url:'',videoId:null,volume:80,color:'#448aff',_status:'idle'},o);}
 const HCOLORS=['#448aff','#00e676','#ffab00','#ff3d00','#b388ff','#00e5ff','#ff6090','#69f0ae'];
 
 const S={showName:'Untitled Show',mode:'show',cues:[],hits:[],selId:null,armed:0,inspCollapsed:false,
-players:{},hitPlayers:{},ready:{},fades:{},duckingCues:new Set(),preDuck:{},pwTimers:{},progInt:null,continuousShow:false};
+players:{},hitPlayers:{},audioEls:{},ready:{},fades:{},duckingCues:new Set(),preDuck:{},pwTimers:{},progInt:null,continuousShow:false};
 
 // ========== RENDER ==========
 function render(){document.getElementById('app').innerHTML=renderApp();bind();ensurePlayers();}
@@ -282,9 +282,23 @@ function rInsp(c){
   </div>
   <div class="isec"><div class="ist">Media</div>
     <div class="ir"><div class="il">Name</div><input class="ii" value="${esc(c.name)}" placeholder="Cue name" data-f="name"></div>
-    <div class="ir"><div class="il">YouTube</div><input class="ii url" value="${esc(c.url)}" placeholder="Paste YouTube URL..." data-f="url"></div>
-    <div style="font-family:var(--mono);font-size:9px;color:${c.videoId?'var(--green-glow)':'var(--text-dim)'};margin-top:3px;">
-      ${c.videoId?'&#10003; '+c.videoId:'No video'}${S.ready[c.id]?' (ready)':(c.videoId?' (loading...)':'')}</div>
+    <div class="ir"><div class="il">Source</div>
+      <div style="display:flex;gap:4px;">
+        <div class="preset-btn ${c.sourceType==='youtube'?'active':''}" onclick="setSource('youtube')">YouTube</div>
+        <div class="preset-btn ${c.sourceType==='file'?'active':''}" onclick="setSource('file')">Audio File</div>
+      </div>
+    </div>
+    ${c.sourceType==='youtube'?`
+      <div class="ir"><div class="il">YouTube</div><input class="ii url" value="${esc(c.url)}" placeholder="Paste YouTube URL..." data-f="url"></div>
+      <div style="font-family:var(--mono);font-size:9px;color:${c.videoId?'var(--green-glow)':'var(--text-dim)'};margin-top:3px;">
+        ${c.videoId?'&#10003; '+c.videoId:'No video'}${S.ready[c.id]?' (ready)':(c.videoId?' (loading...)':'')}</div>
+    `:`
+      <div class="ir"><div class="il">File</div>
+        <button class="btn-s" onclick="uploadAudio()" style="flex:1;text-align:center;">${c.fileName?esc(c.fileName):'Choose .mp3 / .wav ...'}</button>
+      </div>
+      <div style="font-family:var(--mono);font-size:9px;color:${c.fileData?'var(--green-glow)':'var(--text-dim)'};margin-top:3px;">
+        ${c.fileData?'&#10003; Audio loaded'+(c._duration>0?' ('+fmt(c._duration)+')':''):'No file loaded'}</div>
+    `}
   </div>
   <div class="isec"><div class="ist">Playback</div>
     <div class="ir"><div class="il">Volume</div><div class="vsc"><input type="range" min="0" max="100" value="${c.volume}" data-f="volume"><div class="vv">${c.volume}%</div></div></div>
@@ -354,7 +368,52 @@ function applyPreset(id){
   render();
 }
 
-// ========== EVENTS ==========
+function setSource(type){
+  const c=getSel();if(!c)return;
+  c.sourceType=type;
+  render();
+}
+
+function uploadAudio(){
+  const c=getSel();if(!c)return;
+  const input=document.createElement('input');
+  input.type='file';
+  input.accept='.mp3,.wav,.m4a,.ogg,.aac,.flac,audio/*';
+  input.onchange=(e)=>{
+    const file=e.target.files[0];if(!file)return;
+    c.fileName=file.name;
+    if(!c.name)c.name=file.name.replace(/\.[^.]+$/,'');
+    const reader=new FileReader();
+    reader.onload=(ev)=>{
+      c.fileData=ev.target.result;
+      c.sourceType='file';
+      mkAudioEl(c);
+      render();
+    };
+    reader.readAsDataURL(file);
+  };
+  input.click();
+}
+
+function mkAudioEl(c){
+  // Create or replace HTML5 Audio element for a file-based cue
+  if(S.audioEls[c.id]){try{S.audioEls[c.id].pause();}catch(e){}}
+  const audio=new Audio(c.fileData);
+  audio.preload='auto';
+  audio.addEventListener('loadedmetadata',()=>{
+    c._duration=audio.duration;
+    S.ready[c.id]=true;
+    render();
+  });
+  audio.addEventListener('ended',()=>{
+    if(c.loop==='infinite'&&c._status==='playing'){audio.currentTime=c.startTime||0;audio.play();return;}
+    if(c.loop==='count'&&(c._loopsDone||0)<(c.loopCount||2)-1&&c._status==='playing'){
+      c._loopsDone=(c._loopsDone||0)+1;audio.currentTime=c.startTime||0;audio.play();return;}
+    endCue(c,null);
+  });
+  S.audioEls[c.id]=audio;
+  S.ready[c.id]=false;
+}
 function bind(){
   const sn=document.getElementById('sn');if(sn)sn.addEventListener('change',e=>{S.showName=e.target.value;});
   document.querySelectorAll('[data-f]').forEach(el=>{
@@ -363,8 +422,8 @@ function bind(){
       const c=getSel();if(!c)return;
       let v;if(el.type==='checkbox')v=el.checked;else if(el.type==='number'||el.type==='range')v=el.value===''?null:parseFloat(el.value);else v=el.value;
       c[f]=v;
-      if(f==='url'){c.videoId=extractVid(v);if(c.videoId)mkPlayer(c.id,c.videoId);render();return;}
-      if(f==='volume'){const p=S.players[c.id];if(p&&S.ready[c.id])p.setVolume(v);const d=el.parentElement.querySelector('.vv');if(d)d.textContent=v+'%';return;}
+      if(f==='url'){c.videoId=extractVid(v);if(c.videoId){c.sourceType='youtube';mkPlayer(c.id,c.videoId);}render();return;}
+      if(f==='volume'){setVol(c,v);const d=el.parentElement.querySelector('.vv');if(d)d.textContent=v+'%';return;}
       if(['duckOthers','stopOthers','autoFollow','loop','disabled','goAction'].includes(f))render();
     });
   });
@@ -372,7 +431,10 @@ function bind(){
 
 // ========== YOUTUBE ==========
 function ensurePlayers(){
-  S.cues.forEach(c=>{if(c.videoId&&!S.players[c.id])mkPlayer(c.id,c.videoId);});
+  S.cues.forEach(c=>{
+    if(c.sourceType==='file'&&c.fileData&&!S.audioEls[c.id])mkAudioEl(c);
+    else if(c.videoId&&!S.players[c.id])mkPlayer(c.id,c.videoId);
+  });
   S.hits.forEach(h=>{if(h.videoId&&!S.hitPlayers[h.id])mkHitPlayer(h.id,h.videoId);});
   const box=document.getElementById('ytBox');
   const grid=document.getElementById('ytBoxGrid');
@@ -485,26 +547,73 @@ function pressGo(){
   render();
 }
 
-function fireSingleCue(c,p){
-  // Skip if already playing (e.g. batch already started this cue)
+// ========== SOURCE-AGNOSTIC HELPERS ==========
+function hasMedia(c){return c.sourceType==='youtube'?!!c.videoId:!!c.fileData;}
+function isReady(c){return !!S.ready[c.id];}
+function getPlayer(c){return c.sourceType==='youtube'?S.players[c.id]:S.audioEls[c.id];}
+function getVol(c){
+  if(c.sourceType==='file'){const a=S.audioEls[c.id];return a?Math.round(a.volume*100):c.volume;}
+  const p=S.players[c.id];return(p&&S.ready[c.id])?p.getVolume():c.volume;
+}
+function setVol(c,v){
+  if(c.sourceType==='file'){const a=S.audioEls[c.id];if(a)a.volume=Math.max(0,Math.min(1,v/100));}
+  else{const p=S.players[c.id];if(p&&S.ready[c.id])p.setVolume(v);}
+}
+function playPlayer(c){
+  if(c.sourceType==='file'){const a=S.audioEls[c.id];if(a){a.currentTime=c.startTime||0;a.play();}}
+  else{const p=S.players[c.id];if(p){p.seekTo(c.startTime||0,true);p.playVideo();}}
+}
+function pausePlayer(c){
+  if(c.sourceType==='file'){const a=S.audioEls[c.id];if(a)a.pause();}
+  else{const p=S.players[c.id];if(p&&S.ready[c.id])p.pauseVideo();}
+}
+function resumePlayer(c){
+  if(c.sourceType==='file'){const a=S.audioEls[c.id];if(a)a.play();}
+  else{const p=S.players[c.id];if(p&&S.ready[c.id])p.playVideo();}
+}
+function stopPlayer(c){
+  if(c.sourceType==='file'){const a=S.audioEls[c.id];if(a){a.pause();a.currentTime=0;}}
+  else{const p=S.players[c.id];if(p&&S.ready[c.id])p.stopVideo();}
+}
+function seekPlayer(c,t){
+  if(c.sourceType==='file'){const a=S.audioEls[c.id];if(a)a.currentTime=t;}
+  else{const p=S.players[c.id];if(p)p.seekTo(t,true);}
+}
+function getCurTime(c){
+  if(c.sourceType==='file'){const a=S.audioEls[c.id];return a?a.currentTime:0;}
+  const p=S.players[c.id];return(p&&S.ready[c.id])?p.getCurrentTime():0;
+}
+function getDur(c){
+  if(c.sourceType==='file'){const a=S.audioEls[c.id];return a?a.duration:0;}
+  const p=S.players[c.id];return(p&&S.ready[c.id])?p.getDuration():0;
+}
+function fadePlayer(id,c,from,to,dur,done){
+  cancelFade(id);const st=performance.now(),ms=dur*1000;
+  function tick(){const el=performance.now()-st,pr=Math.min(el/ms,1),ea=pr<.5?2*pr*pr:1-Math.pow(-2*pr+2,2)/2;
+  setVol(c,Math.round(from+(to-from)*ea));
+  if(pr<1)S.fades[id]={r:requestAnimationFrame(tick)};else{delete S.fades[id];if(done)done();}}
+  S.fades[id]={r:requestAnimationFrame(tick)};
+}
+
+function fireSingleCue(c){
   if(c._status==='playing'||c._status==='fading'){
     console.log('YouLab: Q'+(S.cues.indexOf(c)+1)+' already playing, skipping');
     return;
   }
-  console.log('YouLab: firing Q'+(S.cues.indexOf(c)+1)+' "'+(c.name||'')+'"');
+  console.log('YouLab: firing Q'+(S.cues.indexOf(c)+1)+' "'+(c.name||'')+'" ['+c.sourceType+']');
   if(c.stopOthers){S.cues.forEach(x=>{if(x.id!==c.id&&['playing','fading'].includes(x._status)){
-    if(c.stopOthersFade>0){x._status='fading';fadeTo(x.id,S.players[x.id],S.players[x.id].getVolume(),0,c.stopOthersFade,()=>{S.players[x.id].stopVideo();x._status='idle';x._currentTime=0;unDuck(x.id);render();});}
-    else stopCue(x.id);}});}
-  if(c.preWait>0){c._status='prewait';render();S.pwTimers[c.id]=setTimeout(()=>{delete S.pwTimers[c.id];startPlay(c,p);},c.preWait*1000);}
-  else startPlay(c,p);
+    if(c.stopOthersFade>0){const xp=getPlayer(x);if(xp){x._status='fading';fadePlayer(x.id,x,getVol(x),0,c.stopOthersFade,()=>{stopPlayer(x);x._status='idle';x._currentTime=0;unDuck(x.id);render();});}
+    }else stopCue(x.id);}});}
+  if(c.preWait>0){c._status='prewait';render();S.pwTimers[c.id]=setTimeout(()=>{delete S.pwTimers[c.id];startPlay(c);},c.preWait*1000);}
+  else startPlay(c);
 }
 
 function executeGoAction(c){
-  const p=S.players[c.id];if(!p||!S.ready[c.id])return;
+  if(!isReady(c))return;
   switch(c.goAction){
-    case'exit-loop':c.loop='off';break;// Let it finish naturally
-    case'fade-stop':c._status='fading';fadeTo(c.id,p,p.getVolume(),0,c.goActionFade,()=>{p.stopVideo();c._status='idle';c._currentTime=0;unDuck(c.id);render();});break;
-    case'fade-next':c._status='fading';fadeTo(c.id,p,p.getVolume(),0,c.goActionFade,()=>{p.stopVideo();c._status='idle';c._currentTime=0;unDuck(c.id);render();});
+    case'exit-loop':c.loop='off';break;
+    case'fade-stop':c._status='fading';fadePlayer(c.id,c,getVol(c),0,c.goActionFade,()=>{stopPlayer(c);c._status='idle';c._currentTime=0;unDuck(c.id);render();});break;
+    case'fade-next':c._status='fading';fadePlayer(c.id,c,getVol(c),0,c.goActionFade,()=>{stopPlayer(c);c._status='idle';c._currentTime=0;unDuck(c.id);render();});
       const idx=S.cues.indexOf(c);triggerNext(idx);break;
   }
   render();
@@ -512,43 +621,34 @@ function executeGoAction(c){
 
 function triggerCue(c,i){
   if(!c||c.disabled){advArm(i+1);return;}
-  if(!c.videoId){advArm(i+1);if(c.autoFollow)triggerAF(c,i);return;}
-  const p=S.players[c.id];
-  if(!p||!S.ready[c.id]){
+  if(!hasMedia(c)){advArm(i+1);if(c.autoFollow)triggerAF(c,i);return;}
+  if(!isReady(c)){
     console.log('YouLab: player not ready for Q'+(i+1)+', retrying...');
     let retries=0;
     const retry=setInterval(()=>{
       retries++;
-      if(S.players[c.id]&&S.ready[c.id]){
-        clearInterval(retry);
-        console.log('YouLab: player ready for Q'+(i+1)+', triggering');
-        fireSingleCue(c,S.players[c.id]);
-        advArm(i+1);
-      }else if(retries>=10){
-        clearInterval(retry);
-        console.warn('YouLab: player for Q'+(i+1)+' never became ready, skipping');
-        advArm(i+1);
-      }
+      if(S.ready[c.id]){clearInterval(retry);console.log('YouLab: ready Q'+(i+1));fireSingleCue(c);advArm(i+1);}
+      else if(retries>=10){clearInterval(retry);console.warn('YouLab: Q'+(i+1)+' never ready');advArm(i+1);}
     },200);
     return;
   }
-  fireSingleCue(c,p);
+  fireSingleCue(c);
   advArm(i+1);
 }
 
-function startPlay(c,p){
+function startPlay(c){
   c._loopsDone=0;c._afFired=false;c._endHandled=false;c._fadeStarted=false;
-  p.seekTo(c.startTime||0,true);
-  p.setVolume(c.fadeIn>0?0:c.volume);
-  p.playVideo();c._status='playing';c._duration=p.getDuration();
+  seekPlayer(c,c.startTime||0);
+  setVol(c,c.fadeIn>0?0:c.volume);
+  playPlayer(c);c._status='playing';c._duration=getDur(c)||c._duration;
   if(c.duckOthers)doDuck(c);
-  if(c.fadeIn>0){setTimeout(()=>{if(c._status==='playing'){const pl=S.players[c.id];if(pl)fadeTo(c.id,pl,0,c.volume,c.fadeIn);}},150);}
+  if(c.fadeIn>0){setTimeout(()=>{if(c._status==='playing')fadePlayer(c.id,c,0,c.volume,c.fadeIn);},150);}
   render();startProg();
 }
 
 function triggerAF(c,idx){
   const pw=c.postWait||0;
-  console.log('YouLab: auto-follow triggered from Q'+(idx+1)+', postWait='+pw);
+  console.log('YouLab: auto-follow from Q'+(idx+1)+', postWait='+pw);
   if(pw<=-3600){triggerNext(idx);return;}
   if(pw<0){triggerNext(idx);return;}
   if(pw>0){setTimeout(()=>triggerNext(idx),pw*1000);return;}
@@ -558,23 +658,22 @@ function triggerAF(c,idx){
 function stopCue(id){
   const c=S.cues.find(x=>x.id===id);if(!c)return;
   if(S.pwTimers[id]){clearTimeout(S.pwTimers[id]);delete S.pwTimers[id];}
-  cancelFade(id);const p=S.players[id];if(p&&S.ready[id])p.stopVideo();
+  cancelFade(id);stopPlayer(c);
   unDuck(id);c._status='idle';c._currentTime=0;c._loopsDone=0;c._endHandled=false;c._fadeStarted=false;render();
 }
 function prevCue(id){
-  const c=S.cues.find(x=>x.id===id);if(!c||!c.videoId)return;
-  const p=S.players[id];if(!p||!S.ready[id])return;
-  p.seekTo(c.startTime||0,true);p.setVolume(c.volume);p.playVideo();
-  c._status='playing';c._duration=p.getDuration();render();startProg();
+  const c=S.cues.find(x=>x.id===id);if(!c||!hasMedia(c)||!isReady(c))return;
+  seekPlayer(c,c.startTime||0);setVol(c,c.volume);playPlayer(c);
+  c._status='playing';c._duration=getDur(c)||c._duration;render();startProg();
 }
-function pauseAll(){S.cues.forEach(c=>{if(['playing','fading'].includes(c._status)){const p=S.players[c.id];if(p&&S.ready[c.id])p.pauseVideo();c._status='paused';}});render();}
-function resumeAll(){S.cues.forEach(c=>{if(c._status==='paused'){const p=S.players[c.id];if(p&&S.ready[c.id])p.playVideo();c._status='playing';}});render();startProg();}
+function pauseAll(){S.cues.forEach(c=>{if(['playing','fading'].includes(c._status)){pausePlayer(c);c._status='paused';}});render();}
+function resumeAll(){S.cues.forEach(c=>{if(c._status==='paused'){resumePlayer(c);c._status='playing';}});render();startProg();}
 function togglePause(){S.cues.some(c=>c._status==='paused')?resumeAll():pauseAll();}
 function stopAll(){S.cues.forEach(c=>stopCue(c.id));S.hits.forEach(h=>{const p=S.hitPlayers[h.id];if(p){try{p.stopVideo();}catch(e){}}h._status='idle';});render();}
 function fadeAll(){
   const dur=5;
-  S.cues.forEach(c=>{if(!['playing','fading'].includes(c._status))return;const p=S.players[c.id];if(!p||!S.ready[c.id])return;
-    c._status='fading';fadeTo(c.id,p,p.getVolume(),0,dur,()=>{p.stopVideo();c._status='idle';c._currentTime=0;unDuck(c.id);render();});});
+  S.cues.forEach(c=>{if(!['playing','fading'].includes(c._status))return;if(!isReady(c))return;
+    c._status='fading';fadePlayer(c.id,c,getVol(c),0,dur,()=>{stopPlayer(c);c._status='idle';c._currentTime=0;unDuck(c.id);render();});});
   S.hits.forEach(h=>{if(h._status!=='playing')return;const p=S.hitPlayers[h.id];if(!p)return;
     try{const v=p.getVolume();let st=performance.now();const ms=dur*1000;
     function t(){const el=performance.now()-st;const pr=Math.min(el/ms,1);const ea=pr<.5?2*pr*pr:1-Math.pow(-2*pr+2,2)/2;p.setVolume(Math.round(v*(1-ea)));if(pr<1)requestAnimationFrame(t);else{p.stopVideo();h._status='idle';render();}}requestAnimationFrame(t);}catch(e){}});
@@ -614,7 +713,7 @@ function endCue(c,p){
   if(c._endHandled)return;c._endHandled=true;
   const idx=S.cues.indexOf(c);
   console.log('YouLab: Q'+(idx+1)+' ended'+(c.autoFollow?' (auto-follow ON)':''));
-  p.pauseVideo();
+  pausePlayer(c);
   c._status='idle';c._currentTime=0;c._loopsDone=0;unDuck(c.id);
   if(c.autoFollow){console.log('YouLab: auto-following from Q'+(idx+1));triggerAF(c,idx);}
   if(S.armed<=idx)advArm(idx+1);
@@ -624,33 +723,29 @@ function updateProg(){
   let any=false;
   S.cues.forEach(c=>{
     if(!['playing','fading','paused'].includes(c._status))return;
-    const p=S.players[c.id];if(!p||!S.ready[c.id])return;
+    if(!isReady(c))return;
     try{
-      c._currentTime=p.getCurrentTime();
-      if(!c._duration||c._duration<=0)c._duration=p.getDuration();
+      c._currentTime=getCurTime(c);
+      if(!c._duration||c._duration<=0)c._duration=getDur(c);
       const effEnd=c.endTime||c._duration;
       const timeLeft=effEnd-c._currentTime;
 
       if(c._status==='playing'&&effEnd>0&&timeLeft<=0.4){
-        // Cue has reached its end
-        if(c.loop==='infinite'){p.seekTo(c.startTime||0,true);return;}
-        if(c.loop==='count'&&(c._loopsDone||0)<(c.loopCount||2)-1){c._loopsDone=(c._loopsDone||0)+1;p.seekTo(c.startTime||0,true);return;}
-        // Fade out at end
+        if(c.loop==='infinite'){seekPlayer(c,c.startTime||0);return;}
+        if(c.loop==='count'&&(c._loopsDone||0)<(c.loopCount||2)-1){c._loopsDone=(c._loopsDone||0)+1;seekPlayer(c,c.startTime||0);return;}
         if(c.fadeOut>0&&!c._fadeStarted){
           c._fadeStarted=true;c._status='fading';
-          fadeTo(c.id,p,p.getVolume(),0,c.fadeOut,()=>{c._fadeStarted=false;endCue(c,p);});
+          fadePlayer(c.id,c,getVol(c),0,c.fadeOut,()=>{c._fadeStarted=false;endCue(c,null);});
           return;
         }
-        if(!c.fadeOut||c.fadeOut<=0){endCue(c,p);return;}
+        if(!c.fadeOut||c.fadeOut<=0){endCue(c,null);return;}
       }
 
-      // Fade out starting before end (when fadeOut > timeLeft but we haven't started yet)
       if(c._status==='playing'&&c.fadeOut>0&&!c._fadeStarted&&effEnd>0&&timeLeft<=c.fadeOut&&timeLeft>0.5){
         c._fadeStarted=true;c._status='fading';
-        fadeTo(c.id,p,p.getVolume(),0,timeLeft,()=>{c._fadeStarted=false;endCue(c,p);});
+        fadePlayer(c.id,c,getVol(c),0,timeLeft,()=>{c._fadeStarted=false;endCue(c,null);});
       }
 
-      // Negative post wait: trigger next before effective end
       if(c.autoFollow&&c.postWait<0&&c.postWait>-3600&&c._status==='playing'){
         const trigAt=effEnd+c.postWait;
         if(c._currentTime>=trigAt&&!c._afFired){c._afFired=true;triggerNext(S.cues.indexOf(c));}}
@@ -668,8 +763,8 @@ function updateProg(){
 
 // ========== CUE LIST ==========
 function addCue(){const c=makeCue();S.cues.push(c);S.selId=c.id;if(S.mode!=='edit')S.mode='edit';render();}
-function delCue(id){stopCue(id);if(S.players[id]){try{S.players[id].destroy();}catch(e){}delete S.players[id];delete S.ready[id];}const slot=document.getElementById('yts-'+id);if(slot)slot.remove();S.cues=S.cues.filter(c=>c.id!==id);if(S.selId===id)S.selId=S.cues.length>0?S.cues[0].id:null;if(S.armed>=S.cues.length)S.armed=Math.max(0,S.cues.length-1);render();}
-function dupeCue(){const s=getSel();if(!s)return;const i=S.cues.indexOf(s);const d=makeCue({name:s.name+' (copy)',url:s.url,videoId:s.videoId,volume:s.volume,fadeIn:s.fadeIn,fadeOut:s.fadeOut,loop:s.loop,loopCount:s.loopCount,autoFollow:s.autoFollow,postWait:s.postWait,preWait:s.preWait,startTime:s.startTime,endTime:s.endTime,duckOthers:s.duckOthers,duckLevel:s.duckLevel,stopOthers:s.stopOthers,stopOthersFade:s.stopOthersFade,goAction:s.goAction,goActionFade:s.goActionFade});S.cues.splice(i+1,0,d);S.selId=d.id;if(d.videoId)mkPlayer(d.id,d.videoId);render();}
+function delCue(id){stopCue(id);if(S.players[id]){try{S.players[id].destroy();}catch(e){}delete S.players[id];delete S.ready[id];}if(S.audioEls[id]){try{S.audioEls[id].pause();}catch(e){}delete S.audioEls[id];delete S.ready[id];}const slot=document.getElementById('yts-'+id);if(slot)slot.remove();S.cues=S.cues.filter(c=>c.id!==id);if(S.selId===id)S.selId=S.cues.length>0?S.cues[0].id:null;if(S.armed>=S.cues.length)S.armed=Math.max(0,S.cues.length-1);render();}
+function dupeCue(){const s=getSel();if(!s)return;const i=S.cues.indexOf(s);const d=makeCue({name:s.name+' (copy)',url:s.url,videoId:s.videoId,sourceType:s.sourceType,fileData:s.fileData,fileName:s.fileName,volume:s.volume,fadeIn:s.fadeIn,fadeOut:s.fadeOut,loop:s.loop,loopCount:s.loopCount,autoFollow:s.autoFollow,postWait:s.postWait,preWait:s.preWait,startTime:s.startTime,endTime:s.endTime,duckOthers:s.duckOthers,duckLevel:s.duckLevel,stopOthers:s.stopOthers,stopOthersFade:s.stopOthersFade,goAction:s.goAction,goActionFade:s.goActionFade});S.cues.splice(i+1,0,d);S.selId=d.id;if(d.videoId)mkPlayer(d.id,d.videoId);if(d.fileData)mkAudioEl(d);render();}
 function moveUp(){const s=getSel();if(!s)return;const i=S.cues.indexOf(s);if(i<=0)return;[S.cues[i-1],S.cues[i]]=[S.cues[i],S.cues[i-1]];render();}
 function moveDown(){const s=getSel();if(!s)return;const i=S.cues.indexOf(s);if(i>=S.cues.length-1)return;[S.cues[i],S.cues[i+1]]=[S.cues[i+1],S.cues[i]];render();}
 function selCue(id){S.selId=id;render();}
@@ -711,10 +806,10 @@ function saveHitEd(id){const h=S.hits.find(x=>x.id===id);if(!h)return;h.name=doc
 function delHit(id){const p=S.hitPlayers[id];if(p){try{p.stopVideo();p.destroy();}catch(e){}delete S.hitPlayers[id];delete S.ready['h-'+id];}const slot=document.getElementById('yts-h-'+id);if(slot)slot.remove();S.hits=S.hits.filter(h=>h.id!==id);render();}
 
 // ========== SAVE/LOAD ==========
-function saveShow(){const d={v:2,showName:S.showName,continuousShow:S.continuousShow,cues:S.cues.map(c=>({name:c.name,url:c.url,videoId:c.videoId,volume:c.volume,fadeIn:c.fadeIn,fadeOut:c.fadeOut,loop:c.loop,loopCount:c.loopCount,autoFollow:c.autoFollow,postWait:c.postWait,preWait:c.preWait,startTime:c.startTime,endTime:c.endTime,duckOthers:c.duckOthers,duckLevel:c.duckLevel,duckFadeTime:c.duckFadeTime,stopOthers:c.stopOthers,stopOthersFade:c.stopOthersFade,goAction:c.goAction,goActionFade:c.goActionFade,disabled:c.disabled})),hits:S.hits.map(h=>({name:h.name,url:h.url,videoId:h.videoId,volume:h.volume,color:h.color}))};
+function saveShow(){const d={v:3,showName:S.showName,continuousShow:S.continuousShow,cues:S.cues.map(c=>({name:c.name,url:c.url,videoId:c.videoId,sourceType:c.sourceType,fileData:c.fileData,fileName:c.fileName,volume:c.volume,fadeIn:c.fadeIn,fadeOut:c.fadeOut,loop:c.loop,loopCount:c.loopCount,autoFollow:c.autoFollow,postWait:c.postWait,preWait:c.preWait,startTime:c.startTime,endTime:c.endTime,duckOthers:c.duckOthers,duckLevel:c.duckLevel,duckFadeTime:c.duckFadeTime,stopOthers:c.stopOthers,stopOthersFade:c.stopOthersFade,goAction:c.goAction,goActionFade:c.goActionFade,disabled:c.disabled})),hits:S.hits.map(h=>({name:h.name,url:h.url,videoId:h.videoId,volume:h.volume,color:h.color}))};
   const b=new Blob([JSON.stringify(d,null,2)],{type:'application/json'}),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=(S.showName||'untitled')+'.youlab';a.click();URL.revokeObjectURL(u);}
 function loadShow(){const i=document.createElement('input');i.type='file';i.accept='.youlab,.json';i.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{importShow(JSON.parse(ev.target.result));}catch(err){alert('Error: '+err.message);}};r.readAsText(f);};i.click();}
-function importShow(d){stopAll();Object.keys(S.players).forEach(i=>{try{S.players[i].destroy();}catch(e){}});Object.keys(S.hitPlayers).forEach(i=>{try{S.hitPlayers[i].destroy();}catch(e){}});S.players={};S.hitPlayers={};S.ready={};const box=document.getElementById('ytBoxGrid');if(box)box.innerHTML='';S.showName=d.showName||'Untitled Show';S.continuousShow=d.continuousShow||false;S.cues=(d.cues||[]).map(c=>makeCue(c));S.hits=(d.hits||[]).map(h=>makeHit(h));S.selId=S.cues.length>0?S.cues[0].id:null;S.armed=0;render();S.cues.forEach(c=>{if(c.videoId)mkPlayer(c.id,c.videoId);});S.hits.forEach(h=>{if(h.videoId)mkHitPlayer(h.id,h.videoId);});}
+function importShow(d){stopAll();Object.keys(S.players).forEach(i=>{try{S.players[i].destroy();}catch(e){}});Object.keys(S.hitPlayers).forEach(i=>{try{S.hitPlayers[i].destroy();}catch(e){}});S.players={};S.hitPlayers={};S.audioEls={};S.ready={};const box=document.getElementById('ytBoxGrid');if(box)box.innerHTML='';S.showName=d.showName||'Untitled Show';S.continuousShow=d.continuousShow||false;S.cues=(d.cues||[]).map(c=>makeCue(c));S.hits=(d.hits||[]).map(h=>makeHit(h));S.selId=S.cues.length>0?S.cues[0].id:null;S.armed=0;render();S.cues.forEach(c=>{if(c.sourceType==='file'&&c.fileData)mkAudioEl(c);else if(c.videoId)mkPlayer(c.id,c.videoId);});S.hits.forEach(h=>{if(h.videoId)mkHitPlayer(h.id,h.videoId);});}
 function newShow(){if(S.cues.length>0&&!confirm('New show? Unsaved changes lost.'))return;importShow({showName:'Untitled Show',cues:[],hits:[]});}
 
 // ========== KEYBOARD ==========
