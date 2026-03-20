@@ -2,9 +2,9 @@
 
 **A browser-based audio cue controller for theatre, built around YouTube and local audio files.**
 
-YouLab lets you paste YouTube links (or upload mp3/wav files), arrange them into a cue list, and run them like a proper show control system. Fades, loops, auto-follows, simultaneous playback, hit buttons are all availalbe from a single web page that runs on any device with a browser.
+YouLab lets you paste YouTube links (or upload mp3/wav files), arrange them into a cue list, and run them like a proper show control system. Fades, loops, auto-follows, simultaneous playback, hit buttons are all available from a single web page that runs on any device with a browser.
 
-It was built for the drama classroom, but it works anywhere you need quick, reliable sound cue playback. This will NOT replace a proper cue playback software for a public theatre presentation (there are too many failpoints: requires internet, YouTube needs to be working etc.), but is a great replacement for "just running audio" off YouTube or Spotify in class.
+It was built for the drama classroom, but it works anywhere you need quick, reliable sound cue playback. This will NOT replace a proper cue playback software for a public theatre presentation (there are too many failpoints: requires internet, YouTube needs to be working etc.), but is a great replacement for "just running audio" off YouTube or Spotify in drama class.
 
 ## If you already know QLab, GoButton, or SFX6
 
